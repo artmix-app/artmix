@@ -2814,41 +2814,105 @@
     window.playNext = playNext;
     window.updateRecommendations = updateRecommendations;
 
-    // Firestore에서 사용자 작품 불러오기
+    // Firestore에서 작품 불러오기 + 기본 데이터와 머지
     function loadUserArtworksFromFirestore() {
       if (!db) return;
+
       db.collection("artworks").get()
         .then(snapshot => {
           snapshot.forEach(doc => {
             const data = doc.data();
             if (!data.title || !data.artist) return;
 
-            const currentIds = artworks.map(a => a.id || 0);
-            const maxId = currentIds.length ? Math.max(...currentIds) : 0;
-            const newId = maxId + 1;
+            // 1) 제목 + 작가가 같은 기본 작품이 이미 있으면 그 객체를 업데이트
+            const existing = artworks.find(a =>
+              a.title === data.title && a.artist === data.artist
+            );
 
-            artworks.push({
-              id: newId,
-              title: data.title,
-              artist: data.artist,
-              tradition: data.tradition || "서양",
-              region: data.region || (data.tradition === "동양" ? (data.region || "") : "서양"),
-              eraMain: data.eraMain || "",
-              material: data.material || "",
-              year: data.year || "",
-              image: data.image || ("https://via.placeholder.com/400x250?text=" + encodeURIComponent(data.title)),
-              description: data.description || "사용자가 직접 추가한 작품입니다.",
-              hashtags: data.hashtags || [],
-              senseTags: data.senseTags || [],
-              docId: doc.id
-            });
+            if (existing) {
+              existing.tradition = data.tradition || existing.tradition || "서양";
+              existing.region = data.region || existing.region || (existing.tradition === "동양"
+                ? (existing.region || "")
+                : "서양");
+              existing.eraMain = data.eraMain || existing.eraMain || "";
+              existing.material = data.material || existing.material || "";
+              existing.year = data.year || existing.year || "";
+              existing.image = data.image || existing.image
+                || ("https://via.placeholder.com/400x250?text=" + encodeURIComponent(existing.title));
+              existing.description = data.description || existing.description || "";
+              existing.hashtags = data.hashtags || existing.hashtags || [];
+              existing.senseTags = data.senseTags || existing.senseTags || [];
+              existing.docId = doc.id;   // 🔑 Firestore 문서 ID 연결
+            } else {
+              // 2) 기본 데이터에 없는 작품이면 새로 추가 (사용자 추가 작품)
+              const currentIds = artworks.map(a => a.id || 0);
+              const maxId = currentIds.length ? Math.max(...currentIds) : 0;
+              const newId = maxId + 1;
+
+              artworks.push({
+                id: newId,
+                title: data.title,
+                artist: data.artist,
+                tradition: data.tradition || "서양",
+                region: data.region || (data.tradition === "동양" ? (data.region || "") : "서양"),
+                eraMain: data.eraMain || "",
+                material: data.material || "",
+                year: data.year || "",
+                image: data.image || ("https://via.placeholder.com/400x250?text=" + encodeURIComponent(data.title)),
+                description: data.description || "사용자가 직접 추가한 작품입니다.",
+                hashtags: data.hashtags || [],
+                senseTags: data.senseTags || [],
+                docId: doc.id
+              });
+            }
           });
-          console.log("Firestore에서 사용자 작품 불러오기 완료");
+          console.log("🔥 Firestore + 기본 작품 머지 완료");
         })
         .catch(err => {
           console.error("Firestore에서 작품 불러오는 중 오류: ", err);
         });
     }
+    // 🧷 한 번만 실행해서 기본 작품들을 Firestore에 업로드하는 함수
+    function migrateAllBaseArtworksToFirestore() {
+      if (!db) {
+        alert("Firestore가 준비되지 않았어요.");
+        return;
+      }
+
+      artworks.forEach(art => {
+        // 이미 Firestore와 연결된 작품은 건너뛰기
+        if (art.docId) return;
+
+        const data = {
+          title: art.title,
+          artist: art.artist,
+          tradition: art.tradition || "서양",
+          region: art.region || (art.tradition === "동양" ? (art.region || "") : "서양"),
+          eraMain: art.eraMain || "",
+          material: art.material || "",
+          year: art.year || "",
+          image: art.image || ("https://via.placeholder.com/400x250?text=" + encodeURIComponent(art.title)),
+          description: art.description || "",
+          hashtags: art.hashtags || [],
+          senseTags: art.senseTags || []
+        };
+
+        if (!data.title || !data.artist) return;
+
+        db.collection("artworks").add(data)
+          .then(docRef => {
+            console.log("✅ 기본 작품 업로드:", art.title, docRef.id);
+            art.docId = docRef.id;   // 메모리에서라도 연결
+          })
+          .catch(err => {
+            console.error("❌ 업로드 실패:", art.title, err);
+          });
+      });
+    }
+
+    // 콘솔에서 실행할 수 있게 전역에 공개
+    window.migrateAllBaseArtworksToFirestore = migrateAllBaseArtworksToFirestore;
+
 
     // 새 작품 추가 + Firestore 저장
     function addArtwork() {
